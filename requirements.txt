@@ -1,0 +1,11 @@
+# Core dependencies
+langgraph>=0.2.0
+langchain-core>=0.3.0
+pydantic>=2.0.0
+rich>=13.0.0
+
+# LLM Providers (uncomment the ones you need)
+langchain-anthropic>=0.2.0      # Anthropic Claude
+langchain-openai>=0.2.0         # OpenAI GPT
+langchain-google-genai>=2.0.0   # Google AI Studio
+# langchain-google-vertexai>=2.0.0  # Google Vertex AI (requires GCP setup)

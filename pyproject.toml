@@ -1,0 +1,43 @@
+[build-system]
+requires = ["setuptools>=61.0"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "mac-assess"
+version = "0.1.0"
+description = "macOS Security Assessment Agent"
+readme = "README.md"
+requires-python = ">=3.9"
+dependencies = [
+    "langgraph>=0.2.0",
+    "langchain-core>=0.3.0",
+    "pydantic>=2.0.0",
+    "rich>=13.0.0",
+]
+
+[project.scripts]
+mac-assess = "mac_assess.cli:main"
+
+[tool.setuptools.packages.find]
+where = ["src"]
+
+[project.optional-dependencies]
+# LLM Providers (install at least one)
+anthropic = ["langchain-anthropic>=0.2.0"]
+openai = ["langchain-openai>=0.2.0"]
+google = ["langchain-google-genai>=2.0.0"]
+vertex = ["langchain-google-vertexai>=2.0.0"]
+
+# All providers
+all = [
+    "langchain-anthropic>=0.2.0",
+    "langchain-openai>=0.2.0",
+    "langchain-google-genai>=2.0.0",
+    "langchain-google-vertexai>=2.0.0",
+]
+
+dev = [
+    "pytest>=7.0.0",
+    "pytest-asyncio>=0.21.0",
+    "ruff>=0.1.0",
+]
