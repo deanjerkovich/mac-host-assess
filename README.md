@@ -144,63 +144,158 @@ for event in agent.stream(initial_state):
     print(event)
 ```
 
-## Included Tools
+## Tool Categories
 
-| Category | Tools | Description |
-|----------|-------|-------------|
-| **System** | `get_system_info` | OS version, hardware, hostname |
-| | `get_current_user` | Current user and group memberships |
-| **Credentials** | `list_keychains` | Accessible macOS keychains |
-| | `find_ssh_keys` | SSH keys in ~/.ssh |
-| | `find_aws_credentials` | AWS credential files |
-| | `find_cloud_configs` | AWS, GCP, Azure, K8s configs |
-| **Network** | `get_network_connections` | Active connections and listening ports |
-| | `get_network_interfaces` | Network interface configuration |
-| **Processes** | `list_running_processes` | Running processes with users |
-| | `list_installed_apps` | Applications in /Applications |
-| | `list_launch_agents` | LaunchAgents (persistence mechanisms) |
-| **Browser** | `find_browser_data` | Chrome, Firefox, Safari data locations |
-| **Files** | `find_sensitive_files` | Keys, configs, credential files |
-| **Generic** | `run_shell_command` | Execute arbitrary commands |
+Tools are organized into modular categories, each designed for independent development and testing:
 
-## Adding Custom Tools
-
-Add new tools to `src/mac_assess/tools.py`:
-
-```python
-from langchain_core.tools import tool
-
-@tool
-def check_sudo_access() -> str:
-    """Check if the current user has sudo access without a password."""
-    result = run_command("sudo -n true 2>&1")
-    if result["returncode"] == 0:
-        return "WARNING: User has passwordless sudo access"
-    return "User requires password for sudo"
-
-# Add to the registry
-ALL_TOOLS = [
-    # ... existing tools ...
-    check_sudo_access,
-]
-```
-
-Tools are automatically available to the agent once added to `ALL_TOOLS`.
+| Category | Module | Tools |
+|----------|--------|-------|
+| **System** | `tools/system/` | `get_system_info`, `get_current_user` |
+| **Credentials** | `tools/credentials/` | `list_keychains`, `find_ssh_keys`, `find_aws_credentials`, `find_cloud_configs` |
+| **Network** | `tools/network/` | `get_network_connections`, `get_network_interfaces` |
+| **Processes** | `tools/processes/` | `list_running_processes`, `list_installed_apps`, `list_launch_agents` |
+| **Browser** | `tools/browser/` | `find_browser_data` |
+| **Filesystem** | `tools/filesystem/` | `find_sensitive_files` |
+| **Shell** | `tools/shell/` | `run_shell_command` |
 
 ## Project Structure
 
 ```
 mac-host-assess/
-├── main.py                     # Entry point
-├── pyproject.toml              # Package configuration
-├── requirements.txt            # Dependencies
+├── main.py                         # Entry point
+├── pyproject.toml                  # Package configuration
+├── requirements.txt                # Dependencies
 └── src/mac_assess/
     ├── __init__.py
-    ├── llm.py                  # LLM provider configuration
-    ├── state.py                # AgentState and AssessmentPlan models
-    ├── tools.py                # Security assessment tools
-    ├── agent.py                # LangGraph agent definition
-    └── cli.py                  # Command-line interface
+    ├── agent.py                    # LangGraph agent definition
+    ├── cli.py                      # Command-line interface
+    ├── llm.py                      # LLM provider configuration
+    ├── state.py                    # AgentState and AssessmentPlan models
+    └── tools/                      # Modular tool system
+        ├── __init__.py             # Tool registry and loader
+        ├── base.py                 # Shared utilities (run_command, etc.)
+        ├── system/                 # System information tools
+        │   ├── __init__.py
+        │   ├── info.py             # get_system_info
+        │   └── user.py             # get_current_user
+        ├── credentials/            # Credential discovery tools
+        │   ├── __init__.py
+        │   ├── keychain.py         # list_keychains
+        │   ├── ssh.py              # find_ssh_keys
+        │   ├── aws.py              # find_aws_credentials
+        │   └── cloud.py            # find_cloud_configs
+        ├── network/                # Network analysis tools
+        │   ├── __init__.py
+        │   ├── connections.py      # get_network_connections
+        │   └── interfaces.py       # get_network_interfaces
+        ├── processes/              # Process analysis tools
+        │   ├── __init__.py
+        │   ├── running.py          # list_running_processes
+        │   ├── apps.py             # list_installed_apps
+        │   └── persistence.py      # list_launch_agents
+        ├── browser/                # Browser data tools
+        │   ├── __init__.py
+        │   └── data.py             # find_browser_data
+        ├── filesystem/             # Filesystem analysis tools
+        │   ├── __init__.py
+        │   └── sensitive.py        # find_sensitive_files
+        └── shell/                  # Generic shell tools
+            ├── __init__.py
+            └── command.py          # run_shell_command
+```
+
+## Adding Custom Tools
+
+### Adding a Tool to an Existing Category
+
+Add a new tool to the appropriate category module:
+
+```python
+# src/mac_assess/tools/credentials/vault.py
+"""HashiCorp Vault credential discovery."""
+
+from __future__ import annotations
+
+from langchain_core.tools import tool
+
+from ..base import run_command
+
+
+@tool
+def find_vault_tokens() -> str:
+    """Find HashiCorp Vault tokens in common locations."""
+    result = run_command("cat ~/.vault-token 2>/dev/null || echo 'No token found'")
+    return result.output
+```
+
+Then register it in the category's `__init__.py`:
+
+```python
+# src/mac_assess/tools/credentials/__init__.py
+from .vault import find_vault_tokens
+
+def get_tools():
+    return [
+        # ... existing tools ...
+        find_vault_tokens,
+    ]
+```
+
+### Creating a New Tool Category
+
+1. Create the category directory:
+
+```bash
+mkdir src/mac_assess/tools/my_category
+```
+
+2. Create the tool module:
+
+```python
+# src/mac_assess/tools/my_category/my_tool.py
+from __future__ import annotations
+
+from langchain_core.tools import tool
+
+from ..base import run_command
+
+
+@tool
+def my_custom_tool() -> str:
+    """Description of what this tool does."""
+    result = run_command("your-command-here")
+    return result.output
+```
+
+3. Create the category `__init__.py`:
+
+```python
+# src/mac_assess/tools/my_category/__init__.py
+from __future__ import annotations
+
+from typing import List
+from langchain_core.tools import BaseTool
+
+from .my_tool import my_custom_tool
+
+
+def get_tools() -> List[BaseTool]:
+    """Get all tools in this category."""
+    return [my_custom_tool]
+```
+
+4. Register the category in `tools/__init__.py`:
+
+```python
+# Add import
+from . import my_category
+
+# Add to get_all_tools()
+def get_all_tools():
+    tools = []
+    # ... existing categories ...
+    tools.extend(my_category.get_tools())
+    return tools
 ```
 
 ## Example Output

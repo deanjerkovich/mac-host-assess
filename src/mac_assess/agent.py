@@ -9,8 +9,12 @@ from langgraph.graph import StateGraph, END
 from langgraph.prebuilt import ToolNode
 
 from .state import AgentState, AssessmentPlan
-from .tools import ALL_TOOLS
+from .tools import get_all_tools
 from .llm import create_llm
+
+
+# Get all available tools
+ALL_TOOLS = get_all_tools()
 
 
 # =============================================================================
