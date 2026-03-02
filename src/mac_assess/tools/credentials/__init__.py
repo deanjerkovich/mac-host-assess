@@ -14,6 +14,9 @@ from .keychain import list_keychains
 from .ssh import find_ssh_keys
 from .aws import find_aws_credentials
 from .cloud import find_cloud_configs
+from .keychain_passwords import query_keychain_passwords
+from .ide_credentials import find_ide_credentials
+from .password_managers import find_password_manager_exposure
 
 
 def get_tools() -> List[BaseTool]:
@@ -23,6 +26,9 @@ def get_tools() -> List[BaseTool]:
         find_ssh_keys,
         find_aws_credentials,
         find_cloud_configs,
+        query_keychain_passwords,
+        find_ide_credentials,
+        find_password_manager_exposure,
     ]
 
 
@@ -32,4 +38,7 @@ __all__ = [
     "find_ssh_keys",
     "find_aws_credentials",
     "find_cloud_configs",
+    "query_keychain_passwords",
+    "find_ide_credentials",
+    "find_password_manager_exposure",
 ]

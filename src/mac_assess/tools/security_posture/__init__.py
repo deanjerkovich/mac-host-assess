@@ -15,6 +15,7 @@ from .tcc import find_tcc_permissions
 from .privesc import find_privilege_escalation_vectors
 from .remote_services import find_remote_access_services
 from .mdm import find_mdm_enrollment
+from .edr import find_edr_and_av_products
 
 
 def get_tools() -> List[BaseTool]:
@@ -25,6 +26,7 @@ def get_tools() -> List[BaseTool]:
         find_privilege_escalation_vectors,
         find_remote_access_services,
         find_mdm_enrollment,
+        find_edr_and_av_products,
     ]
 
 
@@ -35,4 +37,5 @@ __all__ = [
     "find_privilege_escalation_vectors",
     "find_remote_access_services",
     "find_mdm_enrollment",
+    "find_edr_and_av_products",
 ]
