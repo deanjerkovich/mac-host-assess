@@ -13,6 +13,9 @@ from langchain_core.tools import BaseTool
 from .running import list_running_processes
 from .apps import list_installed_apps
 from .persistence import list_launch_agents
+from .launchdaemons import list_launch_daemons
+from .cron import list_cron_jobs
+from .login_items import list_login_items
 
 
 def get_tools() -> List[BaseTool]:
@@ -21,6 +24,9 @@ def get_tools() -> List[BaseTool]:
         list_running_processes,
         list_installed_apps,
         list_launch_agents,
+        list_launch_daemons,
+        list_cron_jobs,
+        list_login_items,
     ]
 
 
@@ -29,4 +35,7 @@ __all__ = [
     "list_running_processes",
     "list_installed_apps",
     "list_launch_agents",
+    "list_launch_daemons",
+    "list_cron_jobs",
+    "list_login_items",
 ]

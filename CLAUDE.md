@@ -27,11 +27,18 @@ src/mac_assess/
     ├── base.py           # run_command(), CommandResult, shared utilities
     ├── system/           # get_system_info, get_current_user
     ├── credentials/      # list_keychains, find_ssh_keys, find_aws_credentials, find_cloud_configs
-    ├── network/          # get_network_connections, get_network_interfaces
-    ├── processes/        # list_running_processes, list_installed_apps, list_launch_agents
+    ├── network/          # get_network_connections, get_network_interfaces, find_lateral_movement_targets
+    ├── processes/        # list_running_processes, list_installed_apps, list_launch_agents,
+    │                     #   list_launch_daemons, list_cron_jobs, list_login_items
     ├── browser/          # find_browser_data
-    ├── filesystem/       # find_sensitive_files
-    └── shell/            # run_shell_command (generic fallback)
+    ├── filesystem/       # find_sensitive_files, find_crypto_wallets
+    ├── shell/            # run_shell_command (generic fallback)
+    ├── supply_chain/     # find_git_push_access, find_publishing_credentials,
+    │                     #   find_infrastructure_write_access, find_container_access
+    ├── security_posture/ # get_macos_security_config, find_tcc_permissions,
+    │                     #   find_privilege_escalation_vectors, find_remote_access_services,
+    │                     #   find_mdm_enrollment
+    └── secrets/          # scan_shell_history, scan_shell_profiles, find_ssh_agent_exposure
 ```
 
 ## Agent Flow
@@ -60,6 +67,13 @@ tools/<category>/
 ```
 
 All tools use `run_command()` from `base.py` which wraps `subprocess.run` with timeout and error handling. Tools return plain strings for the LLM to interpret.
+
+## Category distinctions
+
+- `credentials/` — discovers credential *files* (presence/contents: SSH keys, AWS creds, cloud configs)
+- `supply_chain/` — **active write capability**: authenticated CLI sessions, push-capable git remotes, registry tokens, IaC tool access, container runtimes
+- `security_posture/` — macOS *defences*: SIP, Gatekeeper, FileVault, TCC, firewall, MDM, sudo/SUID
+- `secrets/` — **in-memory and dotfile secrets**: shell history, exported env vars, SSH agent state
 
 ## Adding a Tool
 

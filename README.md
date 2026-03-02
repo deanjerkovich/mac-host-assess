@@ -152,11 +152,14 @@ Tools are organized into modular categories, each designed for independent devel
 |----------|--------|-------|
 | **System** | `tools/system/` | `get_system_info`, `get_current_user` |
 | **Credentials** | `tools/credentials/` | `list_keychains`, `find_ssh_keys`, `find_aws_credentials`, `find_cloud_configs` |
-| **Network** | `tools/network/` | `get_network_connections`, `get_network_interfaces` |
-| **Processes** | `tools/processes/` | `list_running_processes`, `list_installed_apps`, `list_launch_agents` |
+| **Network** | `tools/network/` | `get_network_connections`, `get_network_interfaces`, `find_lateral_movement_targets` |
+| **Processes** | `tools/processes/` | `list_running_processes`, `list_installed_apps`, `list_launch_agents`, `list_launch_daemons`, `list_cron_jobs`, `list_login_items` |
 | **Browser** | `tools/browser/` | `find_browser_data` |
-| **Filesystem** | `tools/filesystem/` | `find_sensitive_files` |
+| **Filesystem** | `tools/filesystem/` | `find_sensitive_files`, `find_crypto_wallets` |
 | **Shell** | `tools/shell/` | `run_shell_command` |
+| **Supply Chain** | `tools/supply_chain/` | `find_git_push_access`, `find_publishing_credentials`, `find_infrastructure_write_access`, `find_container_access` |
+| **Security Posture** | `tools/security_posture/` | `get_macos_security_config`, `find_tcc_permissions`, `find_privilege_escalation_vectors`, `find_remote_access_services`, `find_mdm_enrollment` |
+| **Secrets** | `tools/secrets/` | `scan_shell_history`, `scan_shell_profiles`, `find_ssh_agent_exposure` |
 
 ## Project Structure
 
@@ -199,9 +202,27 @@ mac-host-assess/
         ├── filesystem/             # Filesystem analysis tools
         │   ├── __init__.py
         │   └── sensitive.py        # find_sensitive_files
-        └── shell/                  # Generic shell tools
+        ├── shell/                  # Generic shell tools
+        │   ├── __init__.py
+        │   └── command.py          # run_shell_command
+        ├── supply_chain/           # Supply chain risk tools
+        │   ├── __init__.py
+        │   ├── git_access.py       # find_git_push_access
+        │   ├── publishing.py       # find_publishing_credentials
+        │   ├── infrastructure.py   # find_infrastructure_write_access
+        │   └── containers.py       # find_container_access
+        ├── security_posture/       # macOS security controls assessment
+        │   ├── __init__.py
+        │   ├── macos_security.py   # get_macos_security_config
+        │   ├── tcc.py              # find_tcc_permissions
+        │   ├── privesc.py          # find_privilege_escalation_vectors
+        │   ├── remote_services.py  # find_remote_access_services
+        │   └── mdm.py              # find_mdm_enrollment
+        └── secrets/                # In-memory and file-based secret exposure
             ├── __init__.py
-            └── command.py          # run_shell_command
+            ├── shell_history.py    # scan_shell_history
+            ├── profiles.py         # scan_shell_profiles
+            └── ssh_agent.py        # find_ssh_agent_exposure
 ```
 
 ## Adding Custom Tools

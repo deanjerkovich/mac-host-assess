@@ -12,6 +12,7 @@ from langchain_core.tools import BaseTool
 
 from .connections import get_network_connections
 from .interfaces import get_network_interfaces
+from .lateral_targets import find_lateral_movement_targets
 
 
 def get_tools() -> List[BaseTool]:
@@ -19,6 +20,7 @@ def get_tools() -> List[BaseTool]:
     return [
         get_network_connections,
         get_network_interfaces,
+        find_lateral_movement_targets,
     ]
 
 
@@ -26,4 +28,5 @@ __all__ = [
     "get_tools",
     "get_network_connections",
     "get_network_interfaces",
+    "find_lateral_movement_targets",
 ]

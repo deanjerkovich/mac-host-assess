@@ -3,7 +3,9 @@
 from __future__ import annotations
 
 import argparse
+import datetime
 import sys
+from pathlib import Path
 
 from langchain_core.messages import HumanMessage
 from rich.console import Console
@@ -12,6 +14,8 @@ from rich.panel import Panel
 from rich.table import Table
 
 from .agent import create_agent
+from .audit import AuditCallbackHandler, AuditLog
+from .report import generate_report
 from .state import AgentState
 from . import llm
 
@@ -53,12 +57,20 @@ def list_providers() -> None:
     console.print("[dim]Install all providers: pip install mac-assess[all][/dim]")
 
 
+def _make_report_dir() -> Path:
+    """Create and return a timestamped reports directory."""
+    ts = datetime.datetime.now().strftime("%Y%m%d_%H%M%S")
+    report_dir = Path("reports") / ts
+    report_dir.mkdir(parents=True, exist_ok=True)
+    return report_dir
+
+
 def run_assessment(objective: str, verbose: bool = False) -> None:
     """Run a security assessment with the given objective."""
-    config = llm.get_config()
+    llm_config = llm.get_config()
 
     console.print(f"\n[bold]Starting macOS Security Assessment[/bold]")
-    console.print(f"Provider: [cyan]{config.provider.value}[/cyan] | Model: [cyan]{config.get_default_model()}[/cyan]")
+    console.print(f"Provider: [cyan]{llm_config.provider.value}[/cyan] | Model: [cyan]{llm_config.get_default_model()}[/cyan]")
     console.print(f"Objective: {objective}\n")
 
     try:
@@ -66,6 +78,19 @@ def run_assessment(objective: str, verbose: bool = False) -> None:
     except ValueError as e:
         console.print(f"[red]Error:[/red] {e}")
         sys.exit(1)
+
+    # Set up audit logging
+    report_dir = _make_report_dir()
+    log_path = report_dir / "audit.ndjson"
+    html_path = report_dir / "report.html"
+    audit_log = AuditLog(log_path)
+    callback = AuditCallbackHandler(audit_log)
+
+    audit_log.write("assessment_start", {
+        "objective": objective,
+        "provider": llm_config.provider.value,
+        "model": llm_config.get_default_model(),
+    })
 
     initial_state: AgentState = {
         "messages": [HumanMessage(content=objective)],
@@ -76,12 +101,27 @@ def run_assessment(objective: str, verbose: bool = False) -> None:
 
     console.print("[dim]Planning assessment...[/dim]\n")
 
+    failed = False
     try:
-        # Stream the agent execution
-        for event in agent.stream(initial_state):
+        for event in agent.stream(
+            initial_state,
+            config={"recursion_limit": 150, "callbacks": [callback]},
+        ):
             for node_name, node_state in event.items():
+                # Log every node transition
+                audit_log.write("node_enter", {"node": node_name})
+
                 if verbose:
                     console.print(f"[dim]Node: {node_name}[/dim]")
+
+                # Capture the plan as soon as the planner produces it
+                if node_name == "planner":
+                    plan = node_state.get("plan")
+                    if plan:
+                        audit_log.write("plan_created", {
+                            "objective": plan.objective,
+                            "steps": plan.steps,
+                        })
 
                 if "messages" in node_state:
                     for msg in node_state["messages"]:
@@ -100,10 +140,24 @@ def run_assessment(objective: str, verbose: bool = False) -> None:
                                 if verbose:
                                     console.print(f"  Args: {tool_call['args']}")
 
+        audit_log.write("assessment_complete", {"duration_s": audit_log.elapsed_seconds})
         console.print("\n[bold green]Assessment Complete[/bold green]\n")
 
     except Exception as e:
+        audit_log.write("assessment_error", {"error": str(e)})
         console.print(f"\n[red]Error during assessment:[/red] {e}")
+        failed = True
+
+    finally:
+        audit_log.close()
+        try:
+            generate_report(log_path, html_path)
+            console.print(f"[dim]Audit log:[/dim]  {log_path}")
+            console.print(f"[bold]Report:[/bold]     {html_path}\n")
+        except Exception as report_err:
+            console.print(f"[yellow]Warning: could not generate HTML report:[/yellow] {report_err}")
+
+    if failed:
         sys.exit(1)
 
 

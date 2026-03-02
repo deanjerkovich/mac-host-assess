@@ -12,6 +12,9 @@ Tool Categories:
 - browser: Browser data and stored credentials
 - filesystem: File system analysis and sensitive file discovery
 - shell: Generic command execution
+- supply_chain: Supply chain infiltration vectors (git, registries, IaaS)
+- security_posture: macOS security controls (SIP, TCC, Gatekeeper, firewall)
+- secrets: In-memory and file-based secret exposure (history, profiles, SSH agent)
 """
 
 from __future__ import annotations
@@ -28,6 +31,9 @@ from . import processes
 from . import browser
 from . import filesystem
 from . import shell
+from . import supply_chain
+from . import security_posture
+from . import secrets
 
 
 def get_all_tools() -> List[BaseTool]:
@@ -44,6 +50,9 @@ def get_all_tools() -> List[BaseTool]:
     tools.extend(browser.get_tools())
     tools.extend(filesystem.get_tools())
     tools.extend(shell.get_tools())
+    tools.extend(supply_chain.get_tools())
+    tools.extend(security_posture.get_tools())
+    tools.extend(secrets.get_tools())
     return tools
 
 
@@ -67,6 +76,9 @@ def get_tools_by_category(category: str) -> List[BaseTool]:
         "browser": browser.get_tools,
         "filesystem": filesystem.get_tools,
         "shell": shell.get_tools,
+        "supply_chain": supply_chain.get_tools,
+        "security_posture": security_posture.get_tools,
+        "secrets": secrets.get_tools,
     }
 
     if category not in categories:
