@@ -14,6 +14,7 @@ from .shell_history import scan_shell_history
 from .profiles import scan_shell_profiles
 from .ssh_agent import find_ssh_agent_exposure
 from .communication_tokens import find_communication_tokens
+from .clipboard import check_clipboard
 
 
 def get_tools() -> List[BaseTool]:
@@ -23,6 +24,7 @@ def get_tools() -> List[BaseTool]:
         scan_shell_profiles,
         find_ssh_agent_exposure,
         find_communication_tokens,
+        check_clipboard,
     ]
 
 
@@ -32,4 +34,5 @@ __all__ = [
     "scan_shell_profiles",
     "find_ssh_agent_exposure",
     "find_communication_tokens",
+    "check_clipboard",
 ]

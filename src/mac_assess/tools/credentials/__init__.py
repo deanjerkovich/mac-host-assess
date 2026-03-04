@@ -17,6 +17,7 @@ from .cloud import find_cloud_configs
 from .keychain_passwords import query_keychain_passwords
 from .ide_credentials import find_ide_credentials
 from .password_managers import find_password_manager_exposure
+from .cloud_tokens import find_cloud_service_account_keys
 
 
 def get_tools() -> List[BaseTool]:
@@ -29,6 +30,7 @@ def get_tools() -> List[BaseTool]:
         query_keychain_passwords,
         find_ide_credentials,
         find_password_manager_exposure,
+        find_cloud_service_account_keys,
     ]
 
 
@@ -41,4 +43,5 @@ __all__ = [
     "query_keychain_passwords",
     "find_ide_credentials",
     "find_password_manager_exposure",
+    "find_cloud_service_account_keys",
 ]

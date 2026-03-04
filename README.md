@@ -151,15 +151,15 @@ Tools are organized into modular categories, each designed for independent devel
 | Category | Module | Tools |
 |----------|--------|-------|
 | **System** | `tools/system/` | `get_system_info`, `get_current_user` |
-| **Credentials** | `tools/credentials/` | `list_keychains`, `find_ssh_keys`, `find_aws_credentials`, `find_cloud_configs`, `query_keychain_passwords`, `find_ide_credentials`, `find_password_manager_exposure` |
-| **Network** | `tools/network/` | `get_network_connections`, `get_network_interfaces`, `find_lateral_movement_targets` |
+| **Credentials** | `tools/credentials/` | `list_keychains`, `find_ssh_keys`, `find_aws_credentials`, `find_cloud_configs`, `query_keychain_passwords`, `find_ide_credentials`, `find_password_manager_exposure`, `find_cloud_service_account_keys` |
+| **Network** | `tools/network/` | `get_network_connections`, `get_network_interfaces`, `find_lateral_movement_targets`, `find_proxy_and_vpn_config` |
 | **Processes** | `tools/processes/` | `list_running_processes`, `list_installed_apps`, `list_launch_agents`, `list_launch_daemons`, `list_cron_jobs`, `list_login_items` |
-| **Browser** | `tools/browser/` | `find_browser_data` |
-| **Filesystem** | `tools/filesystem/` | `find_sensitive_files`, `find_crypto_wallets` |
+| **Browser** | `tools/browser/` | `find_browser_data`, `find_browser_saved_passwords` |
+| **Filesystem** | `tools/filesystem/` | `find_sensitive_files`, `find_crypto_wallets`, `find_recently_accessed_files` |
 | **Shell** | `tools/shell/` | `run_shell_command` |
 | **Supply Chain** | `tools/supply_chain/` | `find_git_push_access`, `find_publishing_credentials`, `find_infrastructure_write_access`, `find_container_access` |
 | **Security Posture** | `tools/security_posture/` | `get_macos_security_config`, `find_tcc_permissions`, `find_privilege_escalation_vectors`, `find_remote_access_services`, `find_mdm_enrollment`, `find_edr_and_av_products` |
-| **Secrets** | `tools/secrets/` | `scan_shell_history`, `scan_shell_profiles`, `find_ssh_agent_exposure`, `find_communication_tokens` |
+| **Secrets** | `tools/secrets/` | `scan_shell_history`, `scan_shell_profiles`, `find_ssh_agent_exposure`, `find_communication_tokens`, `check_clipboard` |
 
 ## Project Structure
 
