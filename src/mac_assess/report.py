@@ -603,19 +603,22 @@ _SECTION_DEFS = [
 
 
 def _extract_reporter_text(events: list[dict]) -> str | None:
-    """Return the final reporter LLM response content, or None."""
-    in_reporter = False
+    """Return the final reporter LLM response content, or None.
+
+    LangGraph timing: callbacks fire *during* node execution, but the CLI
+    writes node_enter *after* the stream yields (i.e. after the node finishes).
+    So the reporter's llm_response appears BEFORE node_enter:reporter in the
+    log. The reporter is always the last LLM call, so the last llm_response
+    in the file is reliably the reporter's output.
+    """
     last_content: str | None = None
     for ev in events:
-        if ev["type"] == "node_enter":
-            if ev.get("data", {}).get("node") == "reporter":
-                in_reporter = True
-            else:
-                in_reporter = False
-        elif in_reporter and ev["type"] == "llm_response":
+        if ev["type"] == "llm_response":
             gens = ev.get("data", {}).get("generations", [])
             if gens:
-                last_content = gens[0].get("content", "") or last_content
+                content = gens[0].get("content", "")
+                if content:
+                    last_content = content
     return last_content
 
 
