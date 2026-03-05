@@ -1,14 +1,19 @@
 """HTML report generation from NDJSON audit logs.
 
-Reads an audit log produced by AuditLog and generates a single self-contained
-HTML file with collapsible sections, a sticky navigation sidebar, and
-colour-coded event types.
+Two reports are generated from each audit log:
+
+- audit trace  (report.html)   — what the tool did: every LLM request/response
+  and tool call, segmented by plan step, collapsible for debugging.
+
+- findings     (findings.html) — pure security output: the reporter node's
+  structured markdown rendered as a clean, printable security document.
 """
 
 from __future__ import annotations
 
 import html
 import json
+import re
 from pathlib import Path
 
 _MAX_LEN = 8000  # chars to show per output before truncating in HTML
@@ -19,9 +24,15 @@ _MAX_LEN = 8000  # chars to show per output before truncating in HTML
 # =============================================================================
 
 def generate_report(log_path: Path, report_path: Path) -> None:
-    """Read *log_path* (NDJSON) and write a self-contained HTML to *report_path*."""
+    """Read *log_path* (NDJSON) and write the audit trace HTML to *report_path*."""
     events = _load_events(log_path)
     report_path.write_text(_render(events), encoding="utf-8")
+
+
+def generate_findings_report(log_path: Path, report_path: Path) -> None:
+    """Read *log_path* (NDJSON) and write the security findings HTML to *report_path*."""
+    events = _load_events(log_path)
+    report_path.write_text(_render_findings(events), encoding="utf-8")
 
 
 # =============================================================================
@@ -571,5 +582,398 @@ _PAGE_TEMPLATE = """<!DOCTYPE html>
   </main>
 </div>
 <script>{js}</script>
+</body>
+</html>"""
+
+
+# =============================================================================
+# Findings report — pure security output
+# =============================================================================
+
+# Section names the reporter is prompted to produce, with display config:
+# (match_fragment_lower, display_title, accent_colour)
+_SECTION_DEFS = [
+    ("executive summary",   "Executive Summary",    "#3b82f6"),  # blue
+    ("critical findings",   "Critical Findings",    "#ef4444"),  # red
+    ("credential exposure", "Credential Exposure",  "#f97316"),  # orange
+    ("pivot opportunit",    "Pivot Opportunities",  "#eab308"),  # yellow
+    ("data at risk",        "Data at Risk",         "#8b5cf6"),  # purple
+    ("recommendation",      "Recommendations",      "#10b981"),  # green
+]
+
+
+def _extract_reporter_text(events: list[dict]) -> str | None:
+    """Return the final reporter LLM response content, or None."""
+    in_reporter = False
+    last_content: str | None = None
+    for ev in events:
+        if ev["type"] == "node_enter":
+            if ev.get("data", {}).get("node") == "reporter":
+                in_reporter = True
+            else:
+                in_reporter = False
+        elif in_reporter and ev["type"] == "llm_response":
+            gens = ev.get("data", {}).get("generations", [])
+            if gens:
+                last_content = gens[0].get("content", "") or last_content
+    return last_content
+
+
+def _inline_md(text: str) -> str:
+    """Convert inline markdown (bold, italic, inline code) to HTML."""
+    # Escape first, then apply inline transforms on the escaped text
+    t = html.escape(text, quote=False)
+    t = re.sub(r'\*\*(.+?)\*\*', r'<strong>\1</strong>', t)
+    t = re.sub(r'\*(.+?)\*',     r'<em>\1</em>',         t)
+    t = re.sub(r'`([^`]+)`',     r'<code>\1</code>',     t)
+    return t
+
+
+def _md_to_html(text: str) -> str:
+    """Convert a markdown string to HTML, handling common structures."""
+    lines = text.split("\n")
+    out: list[str] = []
+    in_list: str | None = None   # 'ul' or 'ol'
+    in_code = False
+    code_buf: list[str] = []
+    pending_p: list[str] = []
+
+    def flush_p() -> None:
+        if pending_p:
+            out.append(f'<p>{"<br>".join(pending_p)}</p>')
+            pending_p.clear()
+
+    def flush_list() -> None:
+        nonlocal in_list
+        flush_p()
+        if in_list:
+            out.append(f"</{in_list}>")
+            in_list = None
+
+    for raw in lines:
+        # ── Code fence ────────────────────────────────────────────────────────
+        if raw.startswith("```"):
+            if in_code:
+                out.append(f'<pre><code>{"".join(code_buf)}</code></pre>')
+                code_buf.clear()
+                in_code = False
+            else:
+                flush_list()
+                in_code = True
+            continue
+        if in_code:
+            code_buf.append(html.escape(raw) + "\n")
+            continue
+
+        line = raw.rstrip()
+
+        # ── Headings ──────────────────────────────────────────────────────────
+        if line.startswith("#### "):
+            flush_list()
+            out.append(f'<h4>{_inline_md(line[5:])}</h4>')
+        elif line.startswith("### "):
+            flush_list()
+            out.append(f'<h3>{_inline_md(line[4:])}</h3>')
+        elif line.startswith("## "):
+            flush_list()
+            out.append(f'<h2>{_inline_md(line[3:])}</h2>')
+        elif line.startswith("# "):
+            flush_list()
+            out.append(f'<h1>{_inline_md(line[2:])}</h1>')
+
+        # ── Horizontal rule ───────────────────────────────────────────────────
+        elif line.strip() in ("---", "***", "___"):
+            flush_list()
+            out.append("<hr>")
+
+        # ── Unordered list ────────────────────────────────────────────────────
+        elif re.match(r'^[-*+] ', line):
+            flush_p()
+            if in_list != "ul":
+                if in_list:
+                    out.append(f"</{in_list}>")
+                out.append("<ul>")
+                in_list = "ul"
+            out.append(f"<li>{_inline_md(line[2:])}</li>")
+
+        # ── Ordered list ──────────────────────────────────────────────────────
+        elif re.match(r'^\d+[.)]\s', line):
+            flush_p()
+            if in_list != "ol":
+                if in_list:
+                    out.append(f"</{in_list}>")
+                out.append("<ol>")
+                in_list = "ol"
+            content = re.sub(r'^\d+[.)]\s+', '', line)
+            out.append(f"<li>{_inline_md(content)}</li>")
+
+        # ── Blank line ────────────────────────────────────────────────────────
+        elif not line.strip():
+            flush_list()
+
+        # ── Paragraph text ────────────────────────────────────────────────────
+        else:
+            if in_list:
+                # continuation inside a list item — append to last item
+                if out and out[-1].endswith("</li>"):
+                    out[-1] = out[-1][:-5] + " " + _inline_md(line) + "</li>"
+            else:
+                pending_p.append(_inline_md(line))
+
+    flush_list()
+    if in_code and code_buf:
+        out.append(f'<pre><code>{"".join(code_buf)}</code></pre>')
+    return "\n".join(out)
+
+
+def _split_into_sections(md_text: str) -> list[dict]:
+    """Split the reporter markdown into named sections based on ## headings."""
+    sections: list[dict] = []
+    current_title = ""
+    current_lines: list[str] = []
+
+    for line in md_text.split("\n"):
+        # Match ## or ### headings as section boundaries
+        m = re.match(r'^#{1,3}\s+(.+)', line)
+        if m:
+            if current_lines or current_title:
+                sections.append({
+                    "title": current_title,
+                    "content": "\n".join(current_lines).strip(),
+                })
+            current_title = m.group(1).strip()
+            current_lines = []
+        else:
+            current_lines.append(line)
+
+    if current_title or current_lines:
+        sections.append({
+            "title": current_title,
+            "content": "\n".join(current_lines).strip(),
+        })
+
+    return sections
+
+
+def _section_colour(title: str) -> str:
+    """Return the accent colour for a section based on its title."""
+    tl = title.lower()
+    for fragment, _, colour in _SECTION_DEFS:
+        if fragment in tl:
+            return colour
+    return "#64748b"  # slate default
+
+
+def _render_findings(events: list[dict]) -> str:
+    """Render a clean security findings report from audit events."""
+    # ── Metadata ──────────────────────────────────────────────────────────────
+    start_ev  = next((e for e in events if e["type"] == "assessment_start"),   None)
+    plan_ev   = next((e for e in events if e["type"] == "plan_created"),       None)
+    done_ev   = next((e for e in events if e["type"] == "assessment_complete"), None)
+
+    objective = "Security Assessment"
+    provider = model = start_ts = duration = ""
+    if start_ev:
+        d = start_ev["data"]
+        objective = d.get("objective", objective)
+        provider  = d.get("provider", "")
+        model     = d.get("model", "")
+        start_ts  = start_ev.get("ts", "")[:19].replace("T", " ") + " UTC"
+    if done_ev:
+        secs = int(done_ev["data"].get("duration_s", 0))
+        m, s = divmod(secs, 60)
+        duration = f"{m}m {s}s" if m else f"{s}s"
+
+    # ── Reporter content ──────────────────────────────────────────────────────
+    report_md = _extract_reporter_text(events)
+    if not report_md:
+        body_html = '<p class="empty">No findings recorded — assessment may not have completed.</p>'
+        sections_html = ""
+    else:
+        sections = _split_into_sections(report_md)
+
+        # If there's preamble before the first heading, wrap it too
+        section_cards: list[str] = []
+        for sec in sections:
+            colour   = _section_colour(sec["title"])
+            title_h  = f'<h2 class="section-title">{_e(sec["title"])}</h2>' if sec["title"] else ""
+            content  = _md_to_html(sec["content"]) if sec["content"] else ""
+            if not title_h and not content:
+                continue
+            section_cards.append(
+                f'<div class="finding-card" style="border-left-color:{colour}">'
+                f'{title_h}{content}'
+                f'</div>'
+            )
+        body_html = "\n".join(section_cards)
+
+    # ── Meta info bar ─────────────────────────────────────────────────────────
+    meta_items = " &nbsp;·&nbsp; ".join(
+        v for v in [provider, model, start_ts, (f"⏱ {duration}" if duration else "")]
+        if v
+    )
+
+    page = _FINDINGS_TEMPLATE.format(
+        title=_e(objective),
+        objective=_e(objective),
+        meta=meta_items,
+        body=body_html,
+        css=_FINDINGS_CSS,
+    )
+    return page
+
+
+_FINDINGS_CSS = """
+* { box-sizing: border-box; margin: 0; padding: 0; }
+body {
+  font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Helvetica, Arial, sans-serif;
+  background: #f8fafc;
+  color: #1e293b;
+  line-height: 1.7;
+  font-size: 15px;
+}
+
+/* ── Header ── */
+.report-header {
+  background: linear-gradient(135deg, #0f172a 0%, #1e3a5f 100%);
+  color: #f1f5f9;
+  padding: 2.5rem 3rem 2rem;
+  border-bottom: 4px solid #3b82f6;
+}
+.report-header .logo {
+  font-size: .8rem;
+  text-transform: uppercase;
+  letter-spacing: .15em;
+  color: #94a3b8;
+  margin-bottom: .75rem;
+}
+.report-header h1 {
+  font-size: 1.8rem;
+  font-weight: 700;
+  color: #f8fafc;
+  margin-bottom: .5rem;
+  line-height: 1.3;
+}
+.report-header .meta {
+  font-size: .8rem;
+  color: #94a3b8;
+  margin-top: .5rem;
+}
+
+/* ── Main content ── */
+.report-body {
+  max-width: 900px;
+  margin: 2.5rem auto;
+  padding: 0 2rem 4rem;
+}
+
+/* ── Finding cards ── */
+.finding-card {
+  background: #ffffff;
+  border-left: 5px solid #64748b;
+  border-radius: 8px;
+  padding: 1.75rem 2rem;
+  margin-bottom: 1.5rem;
+  box-shadow: 0 1px 4px rgba(0,0,0,.07);
+}
+.section-title {
+  font-size: 1.05rem;
+  font-weight: 700;
+  text-transform: uppercase;
+  letter-spacing: .06em;
+  color: #0f172a;
+  margin-bottom: 1rem;
+  padding-bottom: .5rem;
+  border-bottom: 1px solid #e2e8f0;
+}
+
+/* ── Typography inside cards ── */
+.finding-card p   { margin-bottom: .75rem; color: #334155; }
+.finding-card p:last-child { margin-bottom: 0; }
+
+.finding-card h1,
+.finding-card h2  { font-size: 1rem; font-weight: 700; margin: 1.25rem 0 .5rem; color: #0f172a; }
+.finding-card h3  { font-size: .95rem; font-weight: 600; margin: 1rem 0 .4rem; color: #1e293b; }
+.finding-card h4  { font-size: .9rem; font-weight: 600; margin: .9rem 0 .35rem; color: #334155; }
+
+.finding-card ul,
+.finding-card ol  { padding-left: 1.4rem; margin-bottom: .75rem; }
+.finding-card li  { margin-bottom: .3rem; color: #334155; }
+
+.finding-card strong { color: #0f172a; }
+.finding-card em     { color: #475569; }
+
+.finding-card code {
+  background: #f1f5f9;
+  border: 1px solid #e2e8f0;
+  border-radius: 3px;
+  padding: .1em .35em;
+  font-family: 'SF Mono', Monaco, Consolas, monospace;
+  font-size: .82em;
+  color: #dc2626;
+}
+.finding-card pre {
+  background: #0f172a;
+  color: #e2e8f0;
+  border-radius: 6px;
+  padding: 1rem;
+  overflow-x: auto;
+  font-family: 'SF Mono', Monaco, Consolas, monospace;
+  font-size: .8rem;
+  line-height: 1.55;
+  margin: .75rem 0;
+}
+.finding-card pre code {
+  background: none;
+  border: none;
+  padding: 0;
+  color: inherit;
+  font-size: inherit;
+}
+.finding-card hr {
+  border: none;
+  border-top: 1px solid #e2e8f0;
+  margin: 1rem 0;
+}
+
+/* ── Footer ── */
+.report-footer {
+  text-align: center;
+  font-size: .75rem;
+  color: #94a3b8;
+  padding: 2rem;
+  border-top: 1px solid #e2e8f0;
+  margin-top: 2rem;
+}
+
+.empty { color: #94a3b8; font-style: italic; padding: 2rem; text-align: center; }
+
+@media print {
+  body { background: #fff; }
+  .report-header { -webkit-print-color-adjust: exact; print-color-adjust: exact; }
+  .finding-card { box-shadow: none; break-inside: avoid; }
+}
+"""
+
+_FINDINGS_TEMPLATE = """<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Security Findings — {title}</title>
+  <style>{css}</style>
+</head>
+<body>
+  <header class="report-header">
+    <div class="logo">mac-assess &nbsp;/&nbsp; Security Findings Report</div>
+    <h1>{objective}</h1>
+    <div class="meta">{meta}</div>
+  </header>
+  <main class="report-body">
+    {body}
+  </main>
+  <footer class="report-footer">
+    Generated by mac-assess &nbsp;·&nbsp; Handle this report with care — it may contain sensitive information.
+  </footer>
 </body>
 </html>"""

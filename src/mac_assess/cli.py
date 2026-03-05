@@ -15,7 +15,7 @@ from rich.table import Table
 
 from .agent import create_agent
 from .audit import AuditCallbackHandler, AuditLog
-from .report import generate_report
+from .report import generate_report, generate_findings_report
 from .state import AgentState
 from . import llm
 
@@ -83,6 +83,7 @@ def run_assessment(objective: str, verbose: bool = False) -> None:
     report_dir = _make_report_dir()
     log_path = report_dir / "audit.ndjson"
     html_path = report_dir / "report.html"
+    findings_path = report_dir / "findings.html"
     audit_log = AuditLog(log_path)
     callback = AuditCallbackHandler(audit_log)
 
@@ -152,8 +153,10 @@ def run_assessment(objective: str, verbose: bool = False) -> None:
         audit_log.close()
         try:
             generate_report(log_path, html_path)
-            console.print(f"[dim]Audit log:[/dim]  {log_path}")
-            console.print(f"[bold]Report:[/bold]     {html_path}\n")
+            generate_findings_report(log_path, findings_path)
+            console.print(f"[dim]Audit log:[/dim]   {log_path}")
+            console.print(f"[dim]Audit report:[/dim] {html_path}")
+            console.print(f"[bold]Findings:[/bold]    {findings_path}\n")
         except Exception as report_err:
             console.print(f"[yellow]Warning: could not generate HTML report:[/yellow] {report_err}")
 
