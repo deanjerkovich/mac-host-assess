@@ -124,22 +124,25 @@ def run_assessment(objective: str, verbose: bool = False) -> None:
                             "steps": plan.steps,
                         })
 
-                if "messages" in node_state:
+                # tool_runner: print each tool as it's recorded, log findings
+                if node_name == "tool_runner":
+                    for finding in node_state.get("findings", []):
+                        console.print(f"[cyan]✓[/cyan] {finding['tool']}")
+                        audit_log.write("tool_result", {
+                            "tool": finding["tool"],
+                            "output": finding["output"],
+                        })
+                        if verbose:
+                            out = finding["output"]
+                            preview = out[:300] + "..." if len(out) > 300 else out
+                            console.print(f"[dim]{preview}[/dim]")
+
+                # planner / reporter: print new AI messages
+                if "messages" in node_state and node_name != "tool_runner":
                     for msg in node_state["messages"]:
                         msg_type = msg.__class__.__name__.replace("Message", "").lower()
-
-                        if hasattr(msg, "content") and msg.content:
-                            if msg_type == "ai":
-                                print_message("ai", msg.content)
-                            elif verbose and msg_type == "tool":
-                                print_message("tool", msg.content)
-
-                        # Show tool calls
-                        if hasattr(msg, "tool_calls") and msg.tool_calls:
-                            for tool_call in msg.tool_calls:
-                                console.print(f"[cyan]Calling tool:[/cyan] {tool_call['name']}")
-                                if verbose:
-                                    console.print(f"  Args: {tool_call['args']}")
+                        if hasattr(msg, "content") and msg.content and msg_type == "ai":
+                            print_message("ai", msg.content)
 
         audit_log.write("assessment_complete", {"duration_s": audit_log.elapsed_seconds})
         console.print("\n[bold green]Assessment Complete[/bold green]\n")

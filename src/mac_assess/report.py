@@ -165,12 +165,14 @@ def _render_tool_call(ev: dict) -> str:
 def _render_tool_result(ev: dict) -> str:
     data = ev.get("data", {})
     output = data.get("output", "")
+    tool_name = data.get("tool", "")
     ts = _ts(ev.get("ts", ""))
     trimmed, was_cut = _trunc(str(output))
     trunc_note = '<div class="truncated">⚠ output truncated — see audit.ndjson for full content</div>' if was_cut else ""
+    name_part = f"&nbsp;<code>{_e(tool_name)}</code>" if tool_name else ""
     return (
         f'<details class="ev ev-tool-result">'
-        f'<summary>✅ Tool Result &nbsp;{ts}</summary>'
+        f'<summary>✅ Tool Result{name_part}&nbsp;{ts}</summary>'
         f'<div class="inner">'
         f'<pre class="code-block">{_e(trimmed)}</pre>{trunc_note}'
         f'</div></details>'
@@ -212,10 +214,9 @@ def _render_events(events: list[dict]) -> str:
 # =============================================================================
 
 def _segment(events: list[dict]) -> list[dict]:
-    """Group events into logical segments: planner, step-N, reporter."""
+    """Group events into logical segments: planner, tool_runner, reporter."""
     segments: list[dict] = []
     current: dict | None = None
-    step_index = 0
 
     for ev in events:
         if ev["type"] != "node_enter":
@@ -229,30 +230,28 @@ def _segment(events: list[dict]) -> list[dict]:
             current = {"type": "planner", "events": []}
             segments.append(current)
 
-        elif node == "executor":
-            # Find an existing step segment for this step_index
-            existing = next(
-                (s for s in segments if s["type"] == "step" and s["step_index"] == step_index),
-                None,
-            )
-            if existing:
-                current = existing  # keep appending into same step
-            else:
-                # Flush planner if it's the first executor visit
-                current = {"type": "step", "step_index": step_index, "events": []}
-                segments.append(current)
-
-        elif node == "tools":
-            pass  # tools events go into the current step segment
-
-        elif node == "advance":
-            step_index += 1
-            # advance has no interesting events; park future events nowhere
-            current = None
+        elif node == "tool_runner":
+            current = {"type": "tool_runner", "events": []}
+            segments.append(current)
 
         elif node == "reporter":
             current = {"type": "reporter", "events": []}
             segments.append(current)
+
+        # Legacy executor/tools/advance nodes (backward compat with old logs)
+        elif node == "executor":
+            existing = next(
+                (s for s in segments if s["type"] == "step" and s.get("step_index", 0) == 0),
+                None,
+            )
+            if existing:
+                current = existing
+            else:
+                current = {"type": "step", "step_index": 0, "events": []}
+                segments.append(current)
+
+        elif node in ("tools", "advance"):
+            pass  # merge into current segment
 
     return segments
 
@@ -343,8 +342,15 @@ def _render(events: list[dict]) -> str:
             badge = f"{llm_n} LLM call{'s' if llm_n != 1 else ''}"
             nav_parts.append(f'<a class="nav-item" href="#planner">Planner</a>')
 
+        elif st == "tool_runner":
+            sid = "tool-runner"
+            tool_result_n = sum(1 for e in evs if e["type"] == "tool_result")
+            title = "🔧 Tool Runner"
+            badge = f"{tool_result_n} tools executed (deterministic)"
+            nav_parts.append('<a class="nav-item" href="#tool-runner">Tool Runner</a>')
+
         elif st == "step":
-            idx = seg["step_index"]
+            idx = seg.get("step_index", 0)
             step_label = steps[idx] if idx < len(steps) else f"Step {idx + 1}"
             short = (step_label[:55] + "…") if len(step_label) > 55 else step_label
             sid = f"step-{idx}"

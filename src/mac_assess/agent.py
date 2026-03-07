@@ -1,85 +1,120 @@
-"""LangGraph agent for macOS security assessment."""
+"""LangGraph agent for macOS security assessment.
+
+Architecture
+------------
+planner     → Creates a human-readable assessment plan (LLM, temperature=0).
+tool_runner → Runs EVERY security tool deterministically (no LLM involvement).
+reporter    → Analyses all tool outputs and writes the findings report (LLM, temperature=0).
+
+The tool_runner is intentionally non-LLM so that the same tools always run in
+the same order, making findings reproducible across multiple runs on the same system.
+"""
 
 from __future__ import annotations
 
-from typing import Literal
-
 from langchain_core.messages import HumanMessage, SystemMessage
 from langgraph.graph import StateGraph, END
-from langgraph.prebuilt import ToolNode
 
 from .state import AgentState, AssessmentPlan
 from .tools import get_all_tools
 from .llm import create_llm
 
 
-# Get all available tools
-ALL_TOOLS = get_all_tools()
+# All tools, indexed by name. run_shell_command is a generic escape hatch
+# excluded from the deterministic scan to keep outputs consistent.
+_ALL_TOOLS = get_all_tools()
+_TOOL_MAP: dict[str, object] = {
+    t.name: t for t in _ALL_TOOLS if t.name != "run_shell_command"
+}
+
+# Per-tool output cap sent to the reporter LLM.
+# Full output is preserved in state["findings"] and audit.ndjson.
+_REPORTER_OUTPUT_MAX = 2500
 
 
 # =============================================================================
-# System Prompts
+# Prompts
 # =============================================================================
 
-SYSTEM_PROMPT = """You are a security assessment agent analyzing a macOS endpoint.
+_SYSTEM_PROMPT = """You are a security assessment agent analysing a macOS endpoint.
 Your goal is to identify potential security risks and answer:
 - If this endpoint was compromised, what would be the impact?
 - Where could an attacker pivot to?
 - What data could be stolen?
 - What credentials could be taken?
-
-You operate in phases:
-1. PLANNING: Create a structured assessment plan based on the objective
-2. EXECUTING: Execute your plan using available tools
-3. REPORTING: Summarize findings and their security implications
-
-Be thorough but efficient. Focus on high-impact findings.
-Always explain the security implications of what you discover.
 """
 
-PLANNER_PROMPT = """Based on the user's objective, create a security assessment plan.
+_PLANNER_PROMPT = """Based on the user's objective, create a security assessment plan.
 
-You must respond with a structured plan in this exact format:
-OBJECTIVE: <one line summary of what we're assessing>
+Respond in this exact format:
+OBJECTIVE: <one line summary>
 STEPS:
-1. <first step>
-2. <second step>
+1. <first area to assess>
+2. <second area to assess>
 ...
 
-Keep steps concrete and actionable. Focus on the most impactful checks first.
-Typically 5-10 steps is appropriate for a focused assessment.
+List the security areas you intend to cover (5-10 items). Be specific.
+"""
+
+_REPORTER_PROMPT = """\
+The following are the complete outputs of {n_tools} security assessment tools
+run on this macOS system. Analyse them and produce a structured findings report.
+
+Use EXACTLY these section headings in this order — no extras, no omissions:
+
+## Executive Summary
+2-3 sentences: overall risk level and the single most critical issue found.
+
+## Critical Findings
+Each entry: what was found | where (path/tool) | security impact.
+Only include findings with concrete evidence from the tool outputs.
+
+## Credential Exposure
+Every credential, key, token, or secret discovered. Type and location for each.
+If none found, write "(none identified)".
+
+## Pivot Opportunities
+Concrete lateral-movement paths an attacker with access to this machine could use.
+Base each entry on specific tool evidence (SSH keys, VPN configs, mounts, etc.).
+If none found, write "(none identified)".
+
+## Data at Risk
+Specific sensitive data categories and their locations on disk.
+If none found, write "(none identified)".
+
+## Recommendations
+Numbered list, most critical first. Each item must reference a specific finding above.
+
+Ground rules:
+- Report only what the tools actually found. Do not speculate.
+- Be specific: include file paths, usernames, service names from the output.
+- If a section has nothing to report, write "(none identified)" — do not omit the section.
 """
 
 
 # =============================================================================
-# Agent Nodes
+# Nodes
 # =============================================================================
 
 def planner_node(state: AgentState) -> AgentState:
-    """Create an assessment plan based on the objective."""
+    """Create an assessment plan from the user objective."""
     llm = create_llm()
-
     messages = [
-        SystemMessage(content=SYSTEM_PROMPT + "\n\n" + PLANNER_PROMPT),
+        SystemMessage(content=_SYSTEM_PROMPT + "\n\n" + _PLANNER_PROMPT),
         *state["messages"],
     ]
-
     response = llm.invoke(messages)
     content = response.content
 
-    # Parse the plan from the response
-    lines = content.strip().split("\n")
     objective = ""
-    steps = []
-
+    steps: list[str] = []
     parsing_steps = False
-    for line in lines:
+    for line in content.strip().split("\n"):
         if line.startswith("OBJECTIVE:"):
             objective = line.replace("OBJECTIVE:", "").strip()
         elif line.startswith("STEPS:"):
             parsing_steps = True
         elif parsing_steps and line.strip():
-            # Remove numbering like "1. " or "- "
             step = line.strip()
             if step[0].isdigit():
                 step = step.split(".", 1)[-1].strip()
@@ -89,7 +124,6 @@ def planner_node(state: AgentState) -> AgentState:
                 steps.append(step)
 
     plan = AssessmentPlan(objective=objective or "Security assessment", steps=steps)
-
     return {
         **state,
         "plan": plan,
@@ -98,138 +132,72 @@ def planner_node(state: AgentState) -> AgentState:
     }
 
 
-def executor_node(state: AgentState) -> AgentState:
-    """Execute the current step in the plan using tools."""
-    llm = create_llm()
-    llm_with_tools = llm.bind_tools(ALL_TOOLS)
+def tool_runner_node(state: AgentState) -> AgentState:
+    """Run every security assessment tool and collect outputs.
 
-    plan = state["plan"]
-    current_step = plan.next_step() if plan else "Perform a general security assessment"
+    Tools are called in a fixed order (sorted by name) so that audit logs
+    are comparable across runs. No LLM is involved here.
+    """
+    findings: list[dict] = []
+    for name in sorted(_TOOL_MAP):
+        tool_obj = _TOOL_MAP[name]
+        try:
+            output = str(tool_obj.invoke({}))
+        except Exception as exc:
+            output = f"ERROR: {exc}"
+        findings.append({"tool": name, "output": output})
 
-    step_prompt = f"""Current assessment step: {current_step}
-
-Execute this step using the available tools. Be thorough and note any security-relevant findings.
-When done with this step, summarize what you found before moving on."""
-
-    messages = [
-        SystemMessage(content=SYSTEM_PROMPT),
-        *state["messages"],
-        HumanMessage(content=step_prompt),
-    ]
-
-    response = llm_with_tools.invoke(messages)
-
-    return {
-        **state,
-        "messages": state["messages"] + [HumanMessage(content=step_prompt), response],
-    }
+    return {**state, "phase": "executing", "findings": findings}
 
 
 def reporter_node(state: AgentState) -> AgentState:
-    """Generate a final assessment report."""
+    """Generate the structured findings report from all tool outputs."""
     llm = create_llm()
+    findings = state.get("findings", [])
 
-    report_prompt = """Based on all the findings from this assessment, generate a security report.
+    # Build the tool-output block, truncating each to keep the prompt manageable
+    tool_sections: list[str] = []
+    for f in findings:
+        out = f["output"]
+        if len(out) > _REPORTER_OUTPUT_MAX:
+            out = (
+                out[:_REPORTER_OUTPUT_MAX]
+                + f"\n... [{len(f['output']) - _REPORTER_OUTPUT_MAX} chars truncated]"
+            )
+        tool_sections.append(f"### {f['tool']}\n{out}")
 
-Structure your report as:
-1. EXECUTIVE SUMMARY - Key risks in 2-3 sentences
-2. CRITICAL FINDINGS - High-impact issues requiring immediate attention
-3. CREDENTIAL EXPOSURE - Any credentials, keys, or secrets found
-4. PIVOT OPPORTUNITIES - Where an attacker could move laterally
-5. DATA AT RISK - Sensitive data that could be exfiltrated
-6. RECOMMENDATIONS - Prioritized remediation steps
-
-Be specific and actionable."""
+    tool_block = "\n\n".join(tool_sections)
+    prompt = _REPORTER_PROMPT.format(n_tools=len(findings))
 
     messages = [
-        SystemMessage(content=SYSTEM_PROMPT),
+        SystemMessage(content=_SYSTEM_PROMPT),
         *state["messages"],
-        HumanMessage(content=report_prompt),
+        HumanMessage(content=f"Tool outputs:\n\n{tool_block}"),
+        HumanMessage(content=prompt),
     ]
 
     response = llm.invoke(messages)
-
     return {
         **state,
         "phase": "complete",
-        "messages": state["messages"] + [HumanMessage(content=report_prompt), response],
+        "messages": state["messages"] + [response],
     }
 
 
-def should_continue(state: AgentState) -> Literal["tools", "advance", "report", "executor"]:
-    """Determine the next step based on state."""
-    messages = state["messages"]
-    last_message = messages[-1]
-
-    # If the last message has tool calls, execute them
-    if hasattr(last_message, "tool_calls") and last_message.tool_calls:
-        return "tools"
-
-    # Check if plan is complete
-    plan = state.get("plan")
-    if plan and plan.is_complete():
-        return "report"
-
-    # If we just finished tools, continue executing
-    if state["phase"] == "executing":
-        return "advance"
-
-    return "executor"
-
-
-def advance_plan(state: AgentState) -> AgentState:
-    """Advance to the next step in the plan."""
-    plan = state["plan"]
-    if plan:
-        plan.advance()
-    return {**state, "plan": plan}
-
-
 # =============================================================================
-# Graph Construction
+# Graph
 # =============================================================================
 
 def create_agent_graph() -> StateGraph:
-    """Create the assessment agent graph."""
-    # Create tool node
-    tool_node = ToolNode(ALL_TOOLS)
-
-    # Build the graph
     graph = StateGraph(AgentState)
+    graph.add_node("planner",     planner_node)
+    graph.add_node("tool_runner", tool_runner_node)
+    graph.add_node("reporter",    reporter_node)
 
-    # Add nodes
-    graph.add_node("planner", planner_node)
-    graph.add_node("executor", executor_node)
-    graph.add_node("tools", tool_node)
-    graph.add_node("advance", advance_plan)
-    graph.add_node("reporter", reporter_node)
-
-    # Set entry point
     graph.set_entry_point("planner")
-
-    # Add edges from planner
-    graph.add_edge("planner", "executor")
-
-    # Add conditional edges from executor
-    graph.add_conditional_edges(
-        "executor",
-        should_continue,
-        {
-            "tools": "tools",
-            "advance": "advance",
-            "report": "reporter",
-            "executor": "executor",
-        },
-    )
-
-    # Tools return to executor
-    graph.add_edge("tools", "executor")
-
-    # Advance goes back to executor
-    graph.add_edge("advance", "executor")
-
-    # Reporter ends the graph
-    graph.add_edge("reporter", END)
+    graph.add_edge("planner",     "tool_runner")
+    graph.add_edge("tool_runner", "reporter")
+    graph.add_edge("reporter",    END)
 
     return graph.compile()
 
